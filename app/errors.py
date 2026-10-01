@@ -167,6 +167,72 @@ def transfer_no_exists(transfer_no: str) -> AppError:
     )
 
 
+def stocktake_no_exists(stocktake_no: str) -> AppError:
+    return AppError(
+        "STOCKTAKE_NO_REUSED",
+        f"盘点单号 {stocktake_no!r} 已存在，盘点单号不得复用",
+        409,
+        details={"stocktake_no": stocktake_no},
+    )
+
+
+def stocktake_not_found(stocktake_no: str) -> AppError:
+    return AppError(
+        "STOCKTAKE_NOT_FOUND",
+        f"盘点单 {stocktake_no!r} 不存在",
+        404,
+        details={"stocktake_no": stocktake_no},
+    )
+
+
+def duplicate_stocktake_line(batch_no: str, location_code: str) -> AppError:
+    return AppError(
+        "DUPLICATE_STOCKTAKE_LINE",
+        f"盘点单内批次 {batch_no!r} 库位 {location_code!r} 出现多行，"
+        "同一（批次, 库位）组合在整单内必须互异",
+        422,
+        details={"batch_no": batch_no, "location_code": location_code},
+    )
+
+
+def stocktake_without_loss() -> AppError:
+    return AppError(
+        "STOCKTAKE_WITHOUT_LOSS",
+        "盘点单至少须包含一条盘亏（实点量小于账面量），全部行账实相符不予受理",
+        422,
+    )
+
+
+def stocktake_book_mismatch(
+    batch_no: str,
+    location_code: str,
+    submitted: object,
+    actual: object,
+) -> AppError:
+    return AppError(
+        "STOCKTAKE_BOOK_MISMATCH",
+        f"批次 {batch_no!r} 库位 {location_code!r} 账面已变动："
+        f"提交账面量 {submitted}，当前库位实存 {actual}；整单已拒绝",
+        409,
+        details={
+            "batch_no": batch_no,
+            "location_code": location_code,
+            "submitted_book_quantity": str(submitted),
+            "current_quantity": str(actual),
+        },
+    )
+
+
+def output_has_stocktake_loss(batch_no: str, stocktake_nos: list[str]) -> AppError:
+    return AppError(
+        "OUTPUT_HAS_STOCKTAKE_LOSS",
+        f"产出批次 {batch_no!r} 已发生过盘亏（{', '.join(sorted(stocktake_nos))}），"
+        "发生盘亏的生产产出不得撤销原生产单",
+        409,
+        details={"batch_no": batch_no, "stocktake_nos": sorted(stocktake_nos)},
+    )
+
+
 def unit_mismatch(batch_no: str, expected: str, actual: str) -> AppError:
     return AppError(
         "UNIT_MISMATCH",

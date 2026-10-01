@@ -7,7 +7,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 
 def _to_decimal(value: object) -> Decimal:
@@ -23,6 +23,24 @@ def _to_decimal(value: object) -> Decimal:
         raise ValueError("数量必须为正数")
     return dec
 
+
+def _to_non_negative_decimal(value: object) -> Decimal:
+    """盘点数量：允许 0 与正数，拒绝负数、NaN/Inf 与布尔值。"""
+    if isinstance(value, bool):
+        raise ValueError("数量不能为布尔值")
+    try:
+        dec = Decimal(str(value))
+    except Exception as exc:  # invalid literal
+        raise ValueError("数量必须是十进制数字") from exc
+    if not dec.is_finite():
+        raise ValueError("数量必须是有限数字")
+    if dec < 0:
+        raise ValueError("数量不得为负数")
+    return dec
+
+
+# 非负数量（盘点账面量/实点量允许为 0）
+NonNegativeQty = Annotated[Decimal, BeforeValidator(_to_non_negative_decimal)]
 
 # 正数数量：入参即完成 > 0 校验
 PositiveQty = Annotated[Decimal, BeforeValidator(_to_decimal)]
@@ -131,6 +149,38 @@ class CancelIn(BaseModel):
         if not value.strip():
             raise ValueError("撤销原因不得为空白")
         return value
+
+
+class StocktakeLineIn(BaseModel):
+    """盘点单行：批次 + 库位 + 账面量（须等于当前该库位实存）+ 实点量。
+
+    账面量/实点量均非负，实点量不得高于账面量。（批次, 库位）在单内互异、
+    整单至少一条盘亏属跨行规则，由服务层以专用错误码拒绝。
+    """
+
+    batch_no: BatchNo
+    location_code: LocationCode
+    book_quantity: NonNegativeQty
+    actual_quantity: NonNegativeQty
+
+    @model_validator(mode="after")
+    def _actual_within_book(self) -> StocktakeLineIn:
+        if self.actual_quantity > self.book_quantity:
+            raise ValueError("实点量不得高于账面量")
+        return self
+
+
+class StocktakeIn(BaseModel):
+    """批次库位盘点提交：唯一盘点单号 + 至少一行。
+
+    行内互异（DUPLICATE_STOCKTAKE_LINE 422）与整单至少一条盘亏
+    （STOCKTAKE_WITHOUT_LOSS 422）由服务层校验，以便返回稳定错误码。
+    """
+
+    stocktake_no: Annotated[
+        str, Field(min_length=1, max_length=64, examples=["CC-20261001-01"])
+    ]
+    items: list[StocktakeLineIn] = Field(min_length=1)
 
 
 # ---------- 响应 ----------
@@ -285,3 +335,24 @@ class TransferOut(BaseModel):
     target_balance: float
     remaining_qty: float
     locations: list[LocationBalanceOut]
+
+
+class StocktakeLineOut(BaseModel):
+    """盘点单行原值快照：原账面量、实点量、差额（盘亏量）与单位。"""
+
+    line_no: int
+    batch_no: str
+    location_code: str
+    unit: str
+    book_quantity: float
+    actual_quantity: float
+    variance_quantity: float
+
+
+class StocktakeOut(BaseModel):
+    """盘点单查询/提交结果：状态与逐行原值、差额、单位。"""
+
+    stocktake_no: str
+    status: str
+    created_at: str
+    items: list[StocktakeLineOut]
