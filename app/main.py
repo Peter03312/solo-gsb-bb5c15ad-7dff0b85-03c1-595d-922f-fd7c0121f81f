@@ -27,9 +27,9 @@ def create_app() -> FastAPI:
         title="批次追溯服务",
         description=(
             "小型食品加工厂本地批次追溯：登记、分装、投料、撤销、余量、"
-            "库位库存与调拨、谱系、污染隔离"
+            "库位库存与调拨、库位盘点核销、谱系、污染隔离"
         ),
-        version="1.3.0",
+        version="1.4.0",
         lifespan=lifespan,
     )
 

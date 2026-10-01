@@ -173,3 +173,85 @@ def unit_mismatch(batch_no: str, expected: str, actual: str) -> AppError:
         f"批次 {batch_no!r} 单位为 {expected!r}，与申报单位 {actual!r} 不一致",
         422,
     )
+
+
+# ---------------------------------------------------------------- 盘点
+
+
+def duplicate_stocktake_line(batch_no: str, location_code: str) -> AppError:
+    return AppError(
+        "DUPLICATE_STOCKTAKE_LINE",
+        f"盘点单中批次 {batch_no!r} 库位 {location_code!r} 出现多次，"
+        "同一盘点单内（批次, 库位）必须互异",
+        422,
+        details={"batch_no": batch_no, "location_code": location_code},
+    )
+
+
+def stocktake_actual_exceeds_book(batch_no: str, location_code: str) -> AppError:
+    return AppError(
+        "STOCKTAKE_ACTUAL_EXCEEDS_BOOK",
+        f"批次 {batch_no!r} 库位 {location_code!r} 的实点量高于账面量，"
+        "盘点只核销盘亏，实点量不得高于账面量",
+        422,
+        details={"batch_no": batch_no, "location_code": location_code},
+    )
+
+
+def stocktake_no_shortage() -> AppError:
+    return AppError(
+        "STOCKTAKE_NO_SHORTAGE",
+        "整单没有任何盘亏行，盘点单至少须有一条实点量低于账面量的盘亏行",
+        422,
+    )
+
+
+def stocktake_book_mismatch(
+    batch_no: str,
+    location_code: str,
+    declared: object,
+    actual_book: object,
+) -> AppError:
+    return AppError(
+        "STOCKTAKE_BOOK_MISMATCH",
+        f"批次 {batch_no!r} 库位 {location_code!r} 账面已变动："
+        f"申报账面量 {declared}，当前库位实存 {actual_book}，整单拒绝",
+        409,
+        details={
+            "batch_no": batch_no,
+            "location_code": location_code,
+            "declared_book_qty": str(declared),
+            "current_book_qty": str(actual_book),
+        },
+    )
+
+
+def stocktake_no_exists(stocktake_no: str) -> AppError:
+    return AppError(
+        "STOCKTAKE_NO_REUSED",
+        f"盘点单号 {stocktake_no!r} 已存在，盘点单号不得复用",
+        409,
+        details={"stocktake_no": stocktake_no},
+    )
+
+
+def stocktake_not_found(stocktake_no: str) -> AppError:
+    return AppError(
+        "STOCKTAKE_NOT_FOUND",
+        f"盘点单 {stocktake_no!r} 不存在",
+        404,
+        details={"stocktake_no": stocktake_no},
+    )
+
+
+def output_already_stocktaken(batch_no: str, stocktake_nos: list[str]) -> AppError:
+    return AppError(
+        "OUTPUT_ALREADY_STOCKTAKEN",
+        f"产出批次 {batch_no!r} 已发生盘亏盘点（{', '.join(sorted(stocktake_nos))}），"
+        "发生盘亏的生产产出不得撤销原生产单",
+        409,
+        details={
+            "batch_no": batch_no,
+            "stocktake_nos": sorted(stocktake_nos),
+        },
+    )

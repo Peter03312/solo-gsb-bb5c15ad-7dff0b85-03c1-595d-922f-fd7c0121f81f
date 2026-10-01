@@ -235,6 +235,81 @@ class StockTransfer(Base):
     )
 
 
+class Stocktake(Base):
+    """盘点单：一次库位盘点的单头。
+
+    凭唯一盘点单号提交多条互异的（批次, 库位）盘点行；成功后在同一事务内
+    按各行差额（账面量 - 实点量）扣减库位余额与批次全局余量。盘点单一经
+    提交即为终态（status 恒为 POSTED）：原账面、实点、差额与时间全部以
+    提交时的快照保留，不可修改；单号全局唯一、不得复用。
+
+    隔离批次（含疑似）与已撤销生产产出批次仍可盘点核销——盘点只核减库存，
+    不触碰谱系、投料记录与生产单据。
+    """
+
+    __tablename__ = "stocktakes"
+
+    stocktake_no: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # 盘点单状态：当前仅支持终态 POSTED（提交即落账，无录入/审核中间态）
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="POSTED")
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    lines: Mapped[list["StocktakeLine"]] = relationship(
+        back_populates="stocktake", cascade="all, delete-orphan"
+    )
+
+
+class StocktakeLine(Base):
+    """盘点单行：某批次在某库位上的一次盘点结果（不可修改的快照）。
+
+    - book_qty：提交时操作员据账面填写、并经事务内逐行核对恰等于该库位
+      当前实存的账面量；
+    - actual_qty：现场实点量（0 <= actual_qty <= book_qty）；
+    - shortage_qty：盘亏差额 = book_qty - actual_qty（整单至少一条 > 0）；
+    - unit：提交当时批次单位的快照（不同批次单位可不同，逐行返回）。
+
+    同一盘点单内（批次, 库位）必须互异；盘点行只追加、不可修改，供按单号
+    查询与“盘亏产出不得撤销生产单”的判定。
+    """
+
+    __tablename__ = "stocktake_lines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    stocktake_no: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("stocktakes.stocktake_no", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # 提交顺序（从 0 起），查询时按此还原逐行原值
+    line_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    batch_no: Mapped[str] = mapped_column(
+        String(64), ForeignKey("batches.batch_no"), nullable=False
+    )
+    location_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    book_qty: Mapped[Decimal] = mapped_column(QTY, nullable=False)
+    actual_qty: Mapped[Decimal] = mapped_column(QTY, nullable=False)
+    shortage_qty: Mapped[Decimal] = mapped_column(QTY, nullable=False)
+
+    stocktake: Mapped[Stocktake] = relationship(back_populates="lines")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "stocktake_no",
+            "batch_no",
+            "location_code",
+            name="uq_stocktake_line_batch_location",
+        ),
+        CheckConstraint("book_qty >= 0", name="ck_stocktake_book_non_negative"),
+        CheckConstraint("actual_qty >= 0", name="ck_stocktake_actual_non_negative"),
+        CheckConstraint("shortage_qty >= 0", name="ck_stocktake_shortage_non_negative"),
+        CheckConstraint(
+            "actual_qty <= book_qty", name="ck_stocktake_actual_within_book"
+        ),
+        Index("ix_stocktake_line_batch", "batch_no"),
+    )
+
+
 class BatchReview(Base):
     """质检复核记录：确认某疑似批次为误报后撤销其疑似标记。
 

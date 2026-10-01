@@ -88,6 +88,8 @@ def init_db() -> None:
     Base.metadata.create_all(bind=get_engine())
     _migrate_additive_columns(get_engine())
     _backfill_locations(get_engine())
+    # 盘点单（stocktakes / stocktake_lines）为纯新增表，create_all 的
+    # IF NOT EXISTS 已覆盖；不改动任何既有表，故无需额外迁移或回填。
 
 
 def _migrate_additive_columns(engine: Engine) -> None:

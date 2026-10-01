@@ -27,6 +27,25 @@ def _to_decimal(value: object) -> Decimal:
 # 正数数量：入参即完成 > 0 校验
 PositiveQty = Annotated[Decimal, BeforeValidator(_to_decimal)]
 
+
+def _to_non_negative_decimal(value: object) -> Decimal:
+    """盘点用数量：允许 0，但拒绝负数与 NaN/Inf/布尔。"""
+    if isinstance(value, bool):
+        raise ValueError("数量不能为布尔值")
+    try:
+        dec = Decimal(str(value))
+    except Exception as exc:  # invalid literal
+        raise ValueError("数量必须是十进制数字") from exc
+    if not dec.is_finite():
+        raise ValueError("数量必须是有限数字")
+    if dec < 0:
+        raise ValueError("数量不得为负数")
+    return dec
+
+
+# 非负数量：盘点的账面量与实点量均允许为 0
+NonNegativeQty = Annotated[Decimal, BeforeValidator(_to_non_negative_decimal)]
+
 BatchNo = Annotated[str, Field(min_length=1, max_length=64, examples=["RM-20260930-01"])]
 Unit = Annotated[str, Field(min_length=1, max_length=16, examples=["kg"])]
 
@@ -130,6 +149,46 @@ class CancelIn(BaseModel):
     def _reason_not_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("撤销原因不得为空白")
+        return value
+
+
+class StocktakeLineIn(BaseModel):
+    """盘点单行申报：批次、库位、账面量与实点量（两种数量均非负）。
+
+    跨字段约束（model 级校验）：实点量不得高于账面量；
+    整单（批次, 库位）互异与至少一条盘亏在服务层给出稳定错误码。
+    单位不在请求中提供：提交时以批次当前单位作为不可修改的逐行快照。
+    """
+
+    batch_no: BatchNo
+    location_code: LocationCode
+    book_qty: NonNegativeQty
+    actual_qty: NonNegativeQty
+
+    @field_validator("batch_no")
+    @classmethod
+    def _batch_no_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("批次编号不得为空白")
+        return value
+
+    def shortage(self) -> Decimal:
+        return self.book_qty - self.actual_qty
+
+
+class StocktakeIn(BaseModel):
+    """盘点单提交：唯一盘点单号 + 至少一条盘点行，整单至少一条盘亏。"""
+
+    stocktake_no: Annotated[
+        str, Field(min_length=1, max_length=64, examples=["ST-20261001-01"])
+    ]
+    lines: list[StocktakeLineIn] = Field(min_length=1)
+
+    @field_validator("stocktake_no")
+    @classmethod
+    def _stocktake_no_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("盘点单号不得为空白")
         return value
 
 
@@ -285,3 +344,28 @@ class TransferOut(BaseModel):
     target_balance: float
     remaining_qty: float
     locations: list[LocationBalanceOut]
+
+
+class StocktakeLineOut(BaseModel):
+    """盘点单行结果：提交时的批次、库位、单位、原账面/实点/差额（不可修改快照）。"""
+
+    line_no: int
+    batch_no: str
+    location_code: str
+    unit: str
+    book_qty: float
+    actual_qty: float
+    shortage_qty: float
+    # 核销后该库位当前实存（= 实点量），供调用方即时核对
+    location_balance: float
+    # 核销后该批次全局余量（各库位之和恒等于此值）
+    batch_remaining_qty: float
+
+
+class StocktakeOut(BaseModel):
+    """盘点单：单号、状态、提交时间与逐行原值/差额/单位。"""
+
+    stocktake_no: str
+    status: str
+    created_at: str
+    lines: list[StocktakeLineOut]
